@@ -240,10 +240,12 @@ def render_app():
     try:
         df = pd.read_excel(uploaded, engine="openpyxl", dtype={"管理主机编号": str, "仪表编号": str, "仪表名称": str})
         progress = st.progress(0, text="处理中：正在分组处理数据...")
+
         def on_progress(value):
-            progress.progress(int(value * 100), text="处理中：正在分组处理数据...")
+            progress.progress(int(value * 70), text="处理中：正在分组处理数据...")
+
         result_df = process_dataframe(df, params, progress_callback=on_progress)
-        progress.progress(100, text="处理中：即将完成...")
+        progress.progress(85, text="处理中：平滑与整理中...")
     except Exception as exc:
         st.error(f"处理失败：{exc}")
         return
@@ -251,9 +253,12 @@ def render_app():
     st.success(f"处理完成，生成 {len(result_df)} 行。")
     st.dataframe(result_df.head(50), use_container_width=True)
 
-    output = BytesIO()
-    result_df.to_excel(output, index=False, header=True)
-    output.seek(0)
+    progress.progress(90, text="处理中：生成导出文件...")
+    with st.spinner("正在生成可下载文件，请稍候..."):
+        output = BytesIO()
+        result_df.to_excel(output, index=False, header=True)
+        output.seek(0)
+    progress.progress(100, text="处理完成，可下载。")
     st.download_button(
         label="下载处理后的数据",
         data=output,
