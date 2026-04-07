@@ -32,36 +32,9 @@ def normalize_excel_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def format_identifier_cell(x) -> str:
+def normalize_excel_text_id_value(x) -> str:
     """
-    Excel 常把整型编号存成 float，直接 str 会得到 1.0；与导出时管理主机编号规则对齐。
-    """
-    if pd.isna(x):
-        return ""
-    if isinstance(x, (bool, np.bool_)):
-        return str(x)
-    if isinstance(x, (int, np.integer)):
-        return str(int(x))
-    if isinstance(x, (float, np.floating)):
-        xf = float(x)
-        if np.isnan(xf):
-            return ""
-        if xf == int(xf):
-            return str(int(xf))
-        s = f"{xf:.10f}".rstrip("0").rstrip(".")
-        return s
-    s = str(x).strip()
-    if s.lower() == "nan":
-        return ""
-    m = re.fullmatch(r"(-?\d+)\.0+", s)
-    if m:
-        return m.group(1)
-    return s
-
-
-def normalize_instrument_id_value(x) -> str:
-    """
-    仪表编号与 Excel 展示一致：
+    管理主机编号、仪表编号等「按文本理解」的列，与 Excel 语义一致：
     - 单元格为文本（pandas 为 str）：原样保留，如 001、1.0、1。
     - 单元格为数字：按数字语义转字符串，整数不带 .0（如 1 而非 1.0）。
     """
@@ -86,10 +59,9 @@ def normalize_instrument_id_value(x) -> str:
 
 def process_dataframe(df, params, progress_callback=None):
     df = normalize_excel_columns(df)
-    if "管理主机编号" in df.columns:
-        df["管理主机编号"] = df["管理主机编号"].map(format_identifier_cell)
-    if "仪表编号" in df.columns:
-        df["仪表编号"] = df["仪表编号"].map(normalize_instrument_id_value)
+    for _col in ("管理主机编号", "仪表编号"):
+        if _col in df.columns:
+            df[_col] = df[_col].map(normalize_excel_text_id_value)
     if "仪表名称" in df.columns:
         df["仪表名称"] = df["仪表名称"].apply(lambda v: "" if pd.isna(v) else str(v).strip())
     freq = normalize_pandas_freq(params["freq"])
@@ -258,10 +230,9 @@ def process_dataframe(df, params, progress_callback=None):
             result_df[col] = np.nan
     result_df = result_df[[c for c in original_columns if c in result_df.columns] + [c for c in result_df.columns if c not in original_columns]]
 
-    if "管理主机编号" in result_df.columns:
-        result_df["管理主机编号"] = result_df["管理主机编号"].map(format_identifier_cell)
-    if "仪表编号" in result_df.columns:
-        result_df["仪表编号"] = result_df["仪表编号"].map(normalize_instrument_id_value)
+    for _col in ("管理主机编号", "仪表编号"):
+        if _col in result_df.columns:
+            result_df[_col] = result_df[_col].map(normalize_excel_text_id_value)
     result_df["采集时间"] = (
         pd.to_datetime(result_df["采集时间"], errors="coerce")
         .dt.strftime("%Y-%m-%d %H:%M:%S")
