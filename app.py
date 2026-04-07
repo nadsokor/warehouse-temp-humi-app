@@ -19,7 +19,24 @@ def normalize_pandas_freq(freq: str) -> str:
     return s
 
 
+def normalize_excel_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """去掉表头首尾空格与 BOM，避免与模板列名不一致。"""
+    df = df.copy()
+    cleaned = []
+    for c in df.columns:
+        name = str(c).strip()
+        if name.startswith("\ufeff"):
+            name = name.lstrip("\ufeff").strip()
+        cleaned.append(name)
+    df.columns = cleaned
+    return df
+
+
 def process_dataframe(df, params, progress_callback=None):
+    df = normalize_excel_columns(df)
+    for _col in ("管理主机编号", "仪表编号", "仪表名称"):
+        if _col in df.columns:
+            df[_col] = df[_col].astype(str)
     freq = normalize_pandas_freq(params["freq"])
     temp_min = params["temp_min"]
     temp_target_min = params["temp_target_min"]
@@ -43,7 +60,9 @@ def process_dataframe(df, params, progress_callback=None):
     required_cols = ["采集时间", "仪表名称", "仪表编号", "管理主机编号", "温度℃", "湿度%RH"]
     missing_cols = [c for c in required_cols if c not in df.columns]
     if missing_cols:
-        raise ValueError(f"缺少必要列: {missing_cols}")
+        raise ValueError(
+            f"缺少必要列: {missing_cols}。当前文件表头为: {list(df.columns)}"
+        )
 
     df["采集时间"] = pd.to_datetime(df["采集时间"], errors="coerce")
     df["温度℃"] = pd.to_numeric(df["温度℃"], errors="coerce")
@@ -170,12 +189,14 @@ def process_dataframe(df, params, progress_callback=None):
     result_df = pd.concat(result_parts, ignore_index=True) if result_parts else pd.DataFrame(columns=original_columns)
     result_df = result_df[result_df["采集时间"].isin(time_range)].copy()
 
-    result_df = (
-        result_df.groupby(["管理主机编号", "仪表编号"], group_keys=False)
-        .apply(smooth_humidity)
-        .groupby(["管理主机编号", "仪表编号"], group_keys=False)
-        .apply(smooth_temp)
-    )
+    # 不用 groupby().apply()：新版 pandas 可能不把分组列放进子表，导致结果缺「管理主机编号」等列。
+    if not result_df.empty:
+        smooth_parts = []
+        for _, g in result_df.groupby(["管理主机编号", "仪表编号"], dropna=False):
+            g = smooth_humidity(g)
+            g = smooth_temp(g)
+            smooth_parts.append(g)
+        result_df = pd.concat(smooth_parts, ignore_index=True)
 
     for col in original_columns:
         if col not in result_df.columns:
@@ -257,7 +278,7 @@ def render_app():
     }
 
     try:
-        df = pd.read_excel(uploaded, engine="openpyxl", dtype={"管理主机编号": str, "仪表编号": str, "仪表名称": str})
+        df = pd.read_excel(uploaded, engine="openpyxl")
         progress = st.progress(0, text="处理中：正在分组处理数据...")
 
         def on_progress(value):
