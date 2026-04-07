@@ -1,11 +1,26 @@
+import re
 import streamlit as st
 import pandas as pd
 import numpy as np
 from io import BytesIO
 
 
+def normalize_pandas_freq(freq: str) -> str:
+    """
+    pandas 2.2+ 不再把 T 当作「分钟」别名，旧写法 30T 会报错。
+    将「数字+T」转为「数字+min」，其余原样返回。
+    """
+    s = (freq or "").strip()
+    if not s:
+        raise ValueError("时间网格频率不能为空")
+    m = re.fullmatch(r"(\d+)T", s, flags=re.IGNORECASE)
+    if m:
+        return f"{m.group(1)}min"
+    return s
+
+
 def process_dataframe(df, params, progress_callback=None):
-    freq = params["freq"]
+    freq = normalize_pandas_freq(params["freq"])
     temp_min = params["temp_min"]
     temp_target_min = params["temp_target_min"]
     temp_target_max = params["temp_target_max"]
@@ -186,7 +201,11 @@ def render_app():
     with st.sidebar:
         st.header("输入与参数")
         uploaded = st.file_uploader("上传 Excel 文件", type=["xlsx"])
-        freq = st.text_input("时间网格频率", value="30T", help="时间对齐的网格频率，例如 30T 表示 30 分钟。")
+        freq = st.text_input(
+            "时间网格频率",
+            value="30min",
+            help="时间对齐的网格频率。半小时请填 30min（旧版脚本里的 30T 会自动换算）。",
+        )
 
         st.subheader("温度范围")
         temp_min = st.number_input("温度接受下限", value=15.0, step=0.1, format="%.1f", help="用于判定是否保留原始温度的下限。")
