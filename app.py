@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 
+from openpyxl import load_workbook
+
 
 def normalize_pandas_freq(freq: str) -> str:
     """
@@ -19,23 +21,101 @@ def normalize_pandas_freq(freq: str) -> str:
     return s
 
 
+def _normalize_header_label(name) -> str:
+    """与 openpyxl 读到的表头使用同一套规则，便于对齐列号。"""
+    if name is None:
+        return ""
+    s = str(name).strip()
+    if s.startswith("\ufeff"):
+        s = s.lstrip("\ufeff").strip()
+    return s
+
+
 def normalize_excel_columns(df: pd.DataFrame) -> pd.DataFrame:
     """去掉表头首尾空格与 BOM，避免与模板列名不一致。"""
     df = df.copy()
-    cleaned = []
-    for c in df.columns:
-        name = str(c).strip()
-        if name.startswith("\ufeff"):
-            name = name.lstrip("\ufeff").strip()
-        cleaned.append(name)
-    df.columns = cleaned
+    df.columns = [_normalize_header_label(c) for c in df.columns]
+    return df
+
+
+def openpyxl_cell_to_id_string(cell) -> str:
+    """
+    从 openpyxl 单元格取出与 Excel 一致的展示语义：
+    - 文本单元格：原样（含空格、制表符、前导零字符串等）。
+    - 数字单元格：按存储值转字符串（整数无 .0）。
+    """
+    v = cell.value
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, bool):
+        return str(v)
+    dt = getattr(cell, "data_type", "")
+    if dt == "e":
+        return ""
+    if isinstance(v, (int, np.integer)):
+        return str(int(v))
+    if isinstance(v, float):
+        if np.isnan(v):
+            return ""
+        fv = float(v)
+        if fv == int(fv):
+            return str(int(fv))
+        return format(fv, ".15g")
+    if hasattr(v, "strftime"):
+        return str(v)
+    return str(v)
+
+
+def overlay_id_columns_from_openpyxl(df: pd.DataFrame, file_bytes: bytes) -> pd.DataFrame:
+    """
+    用 openpyxl 按单元格重读「管理主机编号」「仪表编号」，避免 pandas 把文本当数字解析后丢失格式。
+    失败时回退到 pandas 列 + normalize_excel_text_id_value。
+    """
+    df = df.copy()
+    try:
+        bio = BytesIO(file_bytes)
+        wb = load_workbook(bio, read_only=True, data_only=True)
+        try:
+            ws = wb.worksheets[0]
+            header_cells = next(ws.iter_rows(min_row=1, max_row=1, values_only=False))
+            name_to_j = {}
+            for j, c in enumerate(header_cells):
+                key = _normalize_header_label(c.value)
+                if key and key not in name_to_j:
+                    name_to_j[key] = j
+            n = len(df)
+            data_rows = list(ws.iter_rows(min_row=2, max_row=n + 1, values_only=False))
+            for col_name in ("管理主机编号", "仪表编号"):
+                if col_name not in df.columns:
+                    continue
+                j = name_to_j.get(col_name)
+                if j is None:
+                    continue
+                out = []
+                for i in range(n):
+                    if i >= len(data_rows):
+                        out.append("")
+                        continue
+                    row = data_rows[i]
+                    if j >= len(row):
+                        out.append("")
+                    else:
+                        out.append(openpyxl_cell_to_id_string(row[j]))
+                df[col_name] = out
+        finally:
+            wb.close()
+    except Exception:
+        for col in ("管理主机编号", "仪表编号"):
+            if col in df.columns:
+                df[col] = df[col].map(normalize_excel_text_id_value)
     return df
 
 
 def normalize_excel_text_id_value(x) -> str:
     """
-    管理主机编号、仪表编号：尽量不改动。文本（含首尾空格）原样保留。
-    仅当单元格在 Excel 中为数字、读入为 int/float 时，才转成字符串（整数不带 .0）。
+    无原始 xlsx 字节时的回退：尽量不改动文本；数字按语义转字符串（整数无 .0）。
     """
     if pd.isna(x):
         return ""
@@ -58,11 +138,14 @@ def normalize_excel_text_id_value(x) -> str:
     return str(x)
 
 
-def process_dataframe(df, params, progress_callback=None):
+def process_dataframe(df, params, progress_callback=None, raw_excel_bytes=None):
     df = normalize_excel_columns(df)
-    for _col in ("管理主机编号", "仪表编号"):
-        if _col in df.columns:
-            df[_col] = df[_col].map(normalize_excel_text_id_value)
+    if raw_excel_bytes is not None:
+        df = overlay_id_columns_from_openpyxl(df, raw_excel_bytes)
+    else:
+        for _col in ("管理主机编号", "仪表编号"):
+            if _col in df.columns:
+                df[_col] = df[_col].map(normalize_excel_text_id_value)
     # 文本类列不去首尾空白（含空格、制表符），与 Excel 单元格原文一致
     if "仪表名称" in df.columns:
         df["仪表名称"] = df["仪表名称"].apply(lambda v: "" if pd.isna(v) else str(v))
@@ -232,9 +315,6 @@ def process_dataframe(df, params, progress_callback=None):
             result_df[col] = np.nan
     result_df = result_df[[c for c in original_columns if c in result_df.columns] + [c for c in result_df.columns if c not in original_columns]]
 
-    for _col in ("管理主机编号", "仪表编号"):
-        if _col in result_df.columns:
-            result_df[_col] = result_df[_col].map(normalize_excel_text_id_value)
     result_df["采集时间"] = (
         pd.to_datetime(result_df["采集时间"], errors="coerce")
         .dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -307,13 +387,14 @@ def render_app():
     }
 
     try:
-        df = pd.read_excel(uploaded, engine="openpyxl")
+        raw = uploaded.getvalue()
+        df = pd.read_excel(BytesIO(raw), engine="openpyxl")
         progress = st.progress(0, text="处理中：正在分组处理数据...")
 
         def on_progress(value):
             progress.progress(int(value * 70), text="处理中：正在分组处理数据...")
 
-        result_df = process_dataframe(df, params, progress_callback=on_progress)
+        result_df = process_dataframe(df, params, progress_callback=on_progress, raw_excel_bytes=raw)
         progress.progress(85, text="处理中：平滑与整理中...")
     except Exception as exc:
         st.error(f"处理失败：{exc}")
