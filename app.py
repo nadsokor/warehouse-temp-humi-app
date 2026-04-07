@@ -129,7 +129,7 @@ def process_dataframe(df, params, progress_callback=None):
         group = group.sort_values("采集时间").copy()
         if "湿度%RH" not in group.columns:
             return group
-        vals = pd.to_numeric(group["湿度%RH"], errors="coerce").values
+        vals = pd.to_numeric(group["湿度%RH"], errors="coerce").to_numpy(dtype="float64", copy=True)
         for i in range(1, len(vals)):
             if pd.isna(vals[i - 1]) or pd.isna(vals[i]):
                 continue
@@ -145,7 +145,7 @@ def process_dataframe(df, params, progress_callback=None):
         group = group.sort_values("采集时间").copy()
         if "温度℃" not in group.columns:
             return group
-        vals = pd.to_numeric(group["温度℃"], errors="coerce").values
+        vals = pd.to_numeric(group["温度℃"], errors="coerce").to_numpy(dtype="float64", copy=True)
         for i in range(1, len(vals)):
             if pd.isna(vals[i - 1]) or pd.isna(vals[i]):
                 continue
