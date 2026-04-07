@@ -63,8 +63,9 @@ def process_dataframe(df, params, progress_callback=None):
     for _col in ("管理主机编号", "仪表编号"):
         if _col in df.columns:
             df[_col] = df[_col].map(normalize_excel_text_id_value)
+    # 文本类列不去首尾空白（含空格、制表符），与 Excel 单元格原文一致
     if "仪表名称" in df.columns:
-        df["仪表名称"] = df["仪表名称"].apply(lambda v: "" if pd.isna(v) else str(v).strip())
+        df["仪表名称"] = df["仪表名称"].apply(lambda v: "" if pd.isna(v) else str(v))
     freq = normalize_pandas_freq(params["freq"])
     temp_min = params["temp_min"]
     temp_target_min = params["temp_target_min"]
