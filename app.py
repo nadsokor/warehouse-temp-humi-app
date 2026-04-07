@@ -34,15 +34,16 @@ def normalize_excel_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def normalize_excel_text_id_value(x) -> str:
     """
-    管理主机编号、仪表编号等「按文本理解」的列，与 Excel 语义一致：
-    - 单元格为文本（pandas 为 str）：原样保留，如 001、1.0、1。
-    - 单元格为数字：按数字语义转字符串，整数不带 .0（如 1 而非 1.0）。
+    管理主机编号、仪表编号：尽量不改动。文本（含首尾空格）原样保留。
+    仅当单元格在 Excel 中为数字、读入为 int/float 时，才转成字符串（整数不带 .0）。
     """
     if pd.isna(x):
         return ""
+    # 文本：不做 strip，与输入完全一致
     if isinstance(x, str):
-        s = x.strip()
-        return "" if s.lower() == "nan" else s
+        return x
+    if isinstance(x, np.str_):
+        return str(x)
     if isinstance(x, (bool, np.bool_)):
         return str(x)
     if isinstance(x, (int, np.integer)):
@@ -54,7 +55,7 @@ def normalize_excel_text_id_value(x) -> str:
         if xf == int(xf):
             return str(int(xf))
         return format(xf, ".15g")
-    return str(x).strip()
+    return str(x)
 
 
 def process_dataframe(df, params, progress_callback=None):
